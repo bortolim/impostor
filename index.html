@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Impostor QR Game</title>
+    <script src="cdnjs.cloudflare.com"></script>
+    <script src="cdn.ably.com"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #121212; color: white; padding: 20px; }
+        .card { background: #1e1e1e; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); display: inline-block; }
+        input, button { padding: 10px; margin: 10px; border-radius: 5px; border: none; }
+        button { background: #ff4757; color: white; cursor: pointer; font-weight: bold; }
+        #qrcode { background: white; padding: 10px; display: inline-block; border-radius: 10px; }
+        .hidden { display: none; }
+        .impostor { color: #ff4757; font-size: 24px; font-weight: bold; }
+        .civil { color: #2ed573; font-size: 24px; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <!-- TELA DO COMPUTADOR (MESTRE) -->
+    <div id="screen-pc" class="hidden">
+        <h1>Jogo do Impostor</h1>
+        <p>Escaneie para entrar no jogo:</p>
+        <div id="qrcode"></div>
+        <div style="margin-top: 20px;">
+            <h3>Jogadores Conectados:</h3>
+            <ul id="lista-jogadores" style="list-style: none; padding: 0;"></ul>
+            <button onclick="iniciarJogo()">SORTEAR FUNÇÕES</button>
+        </div>
+    </div>
+
+    <!-- TELA DO CELULAR (JOGADOR) -->
+    <div id="screen-mobile" class="hidden">
+        <div class="card">
+            <div id="registro">
+                <h2>Digite seu Nome</h2>
+                <input type="text" id="player-name" placeholder="Ex: Rodrigo">
+                <button onclick="entrarNoJogo()">Entrar</button>
+            </div>
+            <div id="status-jogo" class="hidden">
+                <p>Aguardando o mestre iniciar...</p>
+            </div>
+            <div id="resultado" class="hidden">
+                <p>Sua identidade é:</p>
+                <div id="papel-revelado"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // CONFIGURAÇÃO DE COMUNICAÇÃO (Use sua chave gratuita do Ably.com aqui)
+        const ably = new Ably.Realtime('jX33ig.Vtd9Hw:OBH1-5SLjew5pIU7oPfXVulS346UPjrOwYq817v7fHQ'); 
+        const canal = ably.channels.get('jogo-impostor');
+        
+        const urlParams = new URLSearchParams(window.location.search);
+        const isMobile = urlParams.has('player');
+
+        // LÓGICA INICIAL
+        if (!isMobile) {
+            // Visão do PC
+            document.getElementById('screen-pc').classList.remove('hidden');
+            const linkJogo = window.location.href + "?player=true";
+            new QRCode(document.getElementById("qrcode"), linkJogo);
+
+            // Escutar entrada de jogadores
+            canal.subscribe('novo-jogador', (msg) => {
+                const li = document.createElement('li');
+                li.innerText = msg.data.nome;
+                document.getElementById('lista-jogadores').appendChild(li);
+            });
+        } else {
+            // Visão do Celular
+            document.getElementById('screen-mobile').classList.remove('hidden');
+        }
+
+        // FUNÇÕES DO JOGADOR (CELULAR)
+        let meuNome = "";
+        function entrarNoJogo() {
+            meuNome = document.getElementById('player-name').value;
+            if(!meuNome) return alert("Digite um nome!");
+            
+            canal.publish('novo-jogador', { nome: meuNome });
+            document.getElementById('registro').classList.add('hidden');
+            document.getElementById('status-jogo').classList.remove('hidden');
+        }
+
+        // Receber sorteio do PC
+        canal.subscribe('sorteio', (msg) => {
+            if (isMobile) {
+                document.getElementById('status-jogo').classList.add('hidden');
+                document.getElementById('resultado').classList.remove('hidden');
+                
+                const resultadoDiv = document.getElementById('papel-revelado');
+                const info = msg.data.distribuicao.find(p => p.nome === meuNome);
+                
+                if (info.isImpostor) {
+                    resultadoDiv.innerHTML = "<span class='impostor'>VOCÊ É O IMPOSTOR!</span><br>Tente enganar os outros!";
+                } else {
+                    resultadoDiv.innerHTML = `<span class='civil'>VOCÊ É CIVIL</span><br>A palavra secreta é: <b>${msg.data.palavra}</b>`;
+                }
+            }
+        });
+
+        // FUNÇÕES DO MESTRE (PC)
+        function iniciarJogo() {
+            const lista = document.querySelectorAll('#lista-jogadores li');
+            const jogadores = Array.from(lista).map(li => li.innerText);
+            if(jogadores.length < 3) return alert("Precisa de pelo menos 3 jogadores!");
+
+            const palavraSecreta = "Banana"; // Você pode criar um array de palavras aleatórias
+            const indiceImpostor = Math.floor(Math.random() * jogadores.length);
+
+            const distribuicao = jogadores.map((nome, index) => ({
+                nome: nome,
+                isImpostor: index === indiceImpostor
+            }));
+
+            canal.publish('sorteio', { 
+                palavra: palavraSecreta, 
+                distribuicao: distribuicao 
+            });
+            alert("Funções enviadas aos celulares!");
+        }
+    </script>
+</body>
+</html>
