@@ -3,125 +3,134 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Impostor QR Game</title>
+    <title>Multiplayer QR Game 2025</title>
     <script src="cdnjs.cloudflare.com"></script>
     <script src="cdn.ably.com"></script>
     <style>
-        body { font-family: sans-serif; text-align: center; background: #121212; color: white; padding: 20px; }
-        .card { background: #1e1e1e; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); display: inline-block; }
-        input, button { padding: 10px; margin: 10px; border-radius: 5px; border: none; }
-        button { background: #ff4757; color: white; cursor: pointer; font-weight: bold; }
-        #qrcode { background: white; padding: 10px; display: inline-block; border-radius: 10px; }
+        :root { --primary: #6c5ce7; --bg: #0f0c29; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: white; text-align: center; margin: 0; overflow-x: hidden; }
+        .container { padding: 20px; max-width: 600px; margin: auto; }
+        #qrcode { background: white; padding: 15px; display: inline-block; border-radius: 10px; margin: 20px 0; }
+        .btn { background: var(--primary); border: none; padding: 15px 30px; color: white; border-radius: 8px; cursor: pointer; font-size: 1.2rem; transition: 0.3s; }
+        .btn:hover { transform: scale(1.05); }
         .hidden { display: none; }
-        .impostor { color: #ff4757; font-size: 24px; font-weight: bold; }
-        .civil { color: #2ed573; font-size: 24px; font-weight: bold; }
+        .player-dot { display: inline-block; width: 20px; height: 20px; border-radius: 50%; margin-right: 10px; }
+        #game-area { width: 100%; height: 200px; background: rgba(255,255,255,0.1); border-radius: 15px; display: flex; align-items: center; justify-content: center; font-size: 3rem; }
     </style>
 </head>
 <body>
 
-    <!-- TELA DO COMPUTADOR (MESTRE) -->
-    <div id="screen-pc" class="hidden">
-        <h1>Jogo do Impostor</h1>
-        <p>Escaneie para entrar no jogo:</p>
-        <div id="qrcode"></div>
-        <div style="margin-top: 20px;">
-            <h3>Jogadores Conectados:</h3>
-            <ul id="lista-jogadores" style="list-style: none; padding: 0;"></ul>
-            <button onclick="iniciarJogo()">SORTEAR FUNÇÕES</button>
+    <div class="container">
+        <!-- TELA DO HOST (COMPUTADOR PRINCIPAL) -->
+        <div id="host-screen" class="hidden">
+            <h1>Sala de Jogo</h1>
+            <p>Escaneie para entrar:</p>
+            <div id="qrcode"></div>
+            <div id="lobby">
+                <h3>Jogadores na Sala:</h3>
+                <div id="player-list"></div>
+                <br>
+                <button class="btn" onclick="startGame()">COMEÇAR JOGO</button>
+            </div>
+            <div id="host-game-stats" class="hidden">
+                <h2>Placar em Tempo Real</h2>
+                <div id="leaderboard"></div>
+            </div>
         </div>
-    </div>
 
-    <!-- TELA DO CELULAR (JOGADOR) -->
-    <div id="screen-mobile" class="hidden">
-        <div class="card">
-            <div id="registro">
-                <h2>Digite seu Nome</h2>
-                <input type="text" id="player-name" placeholder="Ex: Rodrigo">
-                <button onclick="entrarNoJogo()">Entrar</button>
+        <!-- TELA DO JOGADOR (CELULAR OU OUTRO PC) -->
+        <div id="player-screen" class="hidden">
+            <div id="setup-player">
+                <h2>Entrar no Jogo</h2>
+                <input type="text" id="player-name" placeholder="Seu Nome" style="padding: 10px; width: 80%;"><br><br>
+                <input type="color" id="player-color" value="#6c5ce7"><br><br>
+                <button class="btn" onclick="joinLobby()">ENTRAR</button>
             </div>
-            <div id="status-jogo" class="hidden">
-                <p>Aguardando o mestre iniciar...</p>
-            </div>
-            <div id="resultado" class="hidden">
-                <p>Sua identidade é:</p>
-                <div id="papel-revelado"></div>
+
+            <div id="game-controller" class="hidden">
+                <p>Toque o mais rápido que puder!</p>
+                <div id="game-area" onclick="sendClick()">CLIQUE!</div>
+                <h1 id="my-score">0</h1>
             </div>
         </div>
     </div>
 
     <script>
-        // CONFIGURAÇÃO DE COMUNICAÇÃO (Use sua chave gratuita do Ably.com aqui)
-        const ably = new Ably.Realtime('jX33ig.Vtd9Hw:OBH1-5SLjew5pIU7oPfXVulS346UPjrOwYq817v7fHQ'); 
-        const canal = ably.channels.get('jogo-impostor');
+        // --- CONFIGURAÇÃO ---
+        const API_KEY = 'SUA_API_KEY_AQUI'; // Pegue em ably.com
+        const ably = new Ably.Realtime(API_KEY);
+        const channel = ably.channels.get('game-room-01');
         
-        const urlParams = new URLSearchParams(window.location.search);
-        const isMobile = urlParams.has('player');
+        const params = new URLSearchParams(window.location.search);
+        const isPlayer = params.has('join');
+        let myScore = 0;
+        let myData = { name: '', color: '' };
+        let scores = {};
 
-        // LÓGICA INICIAL
-        if (!isMobile) {
-            // Visão do PC
-            document.getElementById('screen-pc').classList.remove('hidden');
-            const linkJogo = window.location.href + "?player=true";
-            new QRCode(document.getElementById("qrcode"), linkJogo);
-
-            // Escutar entrada de jogadores
-            canal.subscribe('novo-jogador', (msg) => {
-                const li = document.createElement('li');
-                li.innerText = msg.data.nome;
-                document.getElementById('lista-jogadores').appendChild(li);
-            });
+        // --- LÓGICA DE INICIALIZAÇÃO ---
+        if (!isPlayer) {
+            document.getElementById('host-screen').classList.remove('hidden');
+            const joinUrl = window.location.href + "?join=true";
+            new QRCode(document.getElementById("qrcode"), joinUrl);
         } else {
-            // Visão do Celular
-            document.getElementById('screen-mobile').classList.remove('hidden');
+            document.getElementById('player-screen').classList.remove('hidden');
         }
 
-        // FUNÇÕES DO JOGADOR (CELULAR)
-        let meuNome = "";
-        function entrarNoJogo() {
-            meuNome = document.getElementById('player-name').value;
-            if(!meuNome) return alert("Digite um nome!");
-            
-            canal.publish('novo-jogador', { nome: meuNome });
-            document.getElementById('registro').classList.add('hidden');
-            document.getElementById('status-jogo').classList.remove('hidden');
-        }
-
-        // Receber sorteio do PC
-        canal.subscribe('sorteio', (msg) => {
-            if (isMobile) {
-                document.getElementById('status-jogo').classList.add('hidden');
-                document.getElementById('resultado').classList.remove('hidden');
-                
-                const resultadoDiv = document.getElementById('papel-revelado');
-                const info = msg.data.distribuicao.find(p => p.nome === meuNome);
-                
-                if (info.isImpostor) {
-                    resultadoDiv.innerHTML = "<span class='impostor'>VOCÊ É O IMPOSTOR!</span><br>Tente enganar os outros!";
-                } else {
-                    resultadoDiv.innerHTML = `<span class='civil'>VOCÊ É CIVIL</span><br>A palavra secreta é: <b>${msg.data.palavra}</b>`;
-                }
+        // --- COMUNICAÇÃO ---
+        channel.subscribe('player-joined', (msg) => {
+            if (!isPlayer) {
+                const div = document.createElement('div');
+                div.innerHTML = `<span class="player-dot" style="background:${msg.data.color}"></span>${msg.data.name}`;
+                document.getElementById('player-list').appendChild(div);
             }
         });
 
-        // FUNÇÕES DO MESTRE (PC)
-        function iniciarJogo() {
-            const lista = document.querySelectorAll('#lista-jogadores li');
-            const jogadores = Array.from(lista).map(li => li.innerText);
-            if(jogadores.length < 3) return alert("Precisa de pelo menos 3 jogadores!");
+        channel.subscribe('game-start', () => {
+            if (isPlayer) {
+                document.getElementById('setup-player').classList.add('hidden');
+                document.getElementById('game-controller').classList.remove('hidden');
+            } else {
+                document.getElementById('lobby').classList.add('hidden');
+                document.getElementById('host-game-stats').classList.remove('hidden');
+            }
+        });
 
-            const palavraSecreta = "Banana"; // Você pode criar um array de palavras aleatórias
-            const indiceImpostor = Math.floor(Math.random() * jogadores.length);
+        channel.subscribe('score-update', (msg) => {
+            scores[msg.data.name] = { score: msg.data.score, color: msg.data.color };
+            updateLeaderboard();
+        });
 
-            const distribuicao = jogadores.map((nome, index) => ({
-                nome: nome,
-                isImpostor: index === indiceImpostor
-            }));
+        // --- FUNÇÕES ---
+        function joinLobby() {
+            myData.name = document.getElementById('player-name').value;
+            myData.color = document.getElementById('player-color').value;
+            if(!myData.name) return alert("Digite um nome");
+            
+            channel.publish('player-joined', myData);
+            document.getElementById('setup-player').innerHTML = "<h3>Conectado! Aguardando o mestre...</h3>";
+        }
 
-            canal.publish('sorteio', { 
-                palavra: palavraSecreta, 
-                distribuicao: distribuicao 
-            });
-            alert("Funções enviadas aos celulares!");
+        function startGame() {
+            channel.publish('game-start', {});
+        }
+
+        function sendClick() {
+            myScore++;
+            document.getElementById('my-score').innerText = myScore;
+            channel.publish('score-update', { name: myData.name, score: myScore, color: myData.color });
+        }
+
+        function updateLeaderboard() {
+            if (isPlayer) return;
+            const board = document.getElementById('leaderboard');
+            const sorted = Object.entries(scores).sort((a, b) => b[1].score - a[1].score);
+            
+            board.innerHTML = sorted.map(([name, data]) => `
+                <div style="font-size: 1.5rem; margin: 10px;">
+                    <span class="player-dot" style="background:${data.color}"></span>
+                    ${name}: <strong>${data.score}</strong>
+                </div>
+            `).join('');
         }
     </script>
 </body>
